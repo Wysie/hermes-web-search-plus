@@ -1,0 +1,9 @@
+name: web-search-plus
+version: "1.0.0"
+description: "Multi-provider web search with intelligent auto-routing (Serper, Tavily, Exa, Querit, Perplexity, SearXNG)"
+author: robbyczgw-cla
+requires_env:
+  - SERPER_API_KEY
+provides_tools:
+  - web_search_plus
+provides_hooks: []
