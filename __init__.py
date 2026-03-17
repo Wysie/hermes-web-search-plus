@@ -1,5 +1,5 @@
 """
-web-search-plus — Hermes Plugin
+web-search-plus — Hermes Plugin v1.3.0
 Multi-provider web search with intelligent auto-routing.
 Ported from robbyczgw-cla/web-search-plus-plugin (OpenClaw) to Hermes Plugin API.
 """
@@ -10,12 +10,20 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 _SEARCH_SCRIPT = Path(__file__).parent / "search.py"
 
 
-def _run_search(query: str, provider: str = "auto", count: int = 5, exa_depth: str = "normal") -> dict:
+def _run_search(
+    query: str,
+    provider: str = "auto",
+    count: int = 5,
+    exa_depth: str = "normal",
+    time_range: Optional[str] = None,
+    include_domains: Optional[List[str]] = None,
+    exclude_domains: Optional[List[str]] = None,
+) -> dict:
     """Call search.py subprocess and return parsed JSON result."""
     cmd = [
         sys.executable,
@@ -27,8 +35,13 @@ def _run_search(query: str, provider: str = "auto", count: int = 5, exa_depth: s
     ]
     if exa_depth != "normal":
         cmd += ["--exa-depth", exa_depth]
+    if time_range and time_range != "none":
+        cmd += ["--time-range", time_range]
+    if include_domains:
+        cmd += ["--include-domains"] + include_domains
+    if exclude_domains:
+        cmd += ["--exclude-domains"] + exclude_domains
 
-    # Forward all relevant API keys from environment
     env = os.environ.copy()
 
     try:
@@ -36,12 +49,11 @@ def _run_search(query: str, provider: str = "auto", count: int = 5, exa_depth: s
             cmd,
             capture_output=True,
             text=True,
-            timeout=65,
+            timeout=75,
             env=env,
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
-            # Try to parse stderr as JSON (fallback/error output)
             try:
                 return json.loads(stderr)
             except json.JSONDecodeError:
@@ -50,7 +62,7 @@ def _run_search(query: str, provider: str = "auto", count: int = 5, exa_depth: s
         return json.loads(result.stdout)
 
     except subprocess.TimeoutExpired:
-        return {"error": "Search timed out after 30s", "provider": provider, "query": query, "results": []}
+        return {"error": "Search timed out after 75s", "provider": provider, "query": query, "results": []}
     except Exception as e:
         return {"error": str(e), "provider": provider, "query": query, "results": []}
 
@@ -68,7 +80,6 @@ def _format_results(data: dict) -> str:
 
     lines = []
 
-    # Routing info
     if routing.get("auto_routed"):
         confidence = routing.get("confidence_level", "")
         reason = routing.get("reason", "")
@@ -76,11 +87,9 @@ def _format_results(data: dict) -> str:
     else:
         lines.append(f"[Provider: {provider}{' | cached' if cached else ''}]")
 
-    # Direct answer if available
     if answer:
         lines.append(f"\nAnswer: {answer}\n")
 
-    # Results
     for i, r in enumerate(results, 1):
         title = r.get("title", "No title")
         url = r.get("url", "")
@@ -106,6 +115,7 @@ def register(ctx: Any) -> None:
             "Serper for shopping/news/facts, Tavily for research/analysis, "
             "Exa for semantic discovery, Querit for multilingual/real-time, "
             "Perplexity for direct answers. "
+            "Set depth='deep' for Exa multi-source synthesis, 'deep-reasoning' for complex cross-document analysis. "
             "Override with provider param if needed."
         ),
         "input_schema": {
@@ -117,7 +127,7 @@ def register(ctx: Any) -> None:
                 },
                 "provider": {
                     "type": "string",
-                    "enum": ["auto", "serper", "tavily", "exa", "querit", "perplexity", "searxng"],
+                    "enum": ["auto", "serper", "tavily", "exa", "querit", "perplexity", "you", "searxng"],
                     "description": "Search provider. Use 'auto' for intelligent routing (default).",
                     "default": "auto",
                 },
@@ -134,21 +144,49 @@ def register(ctx: Any) -> None:
                     "minimum": 1,
                     "maximum": 20,
                 },
+                "time_range": {
+                    "type": "string",
+                    "enum": ["day", "week", "month", "year"],
+                    "description": "Filter results by recency. Optional.",
+                },
+                "include_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Whitelist specific domains (e.g. ['arxiv.org', 'github.com']). Optional.",
+                },
+                "exclude_domains": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Blacklist specific domains (e.g. ['reddit.com']). Optional.",
+                },
             },
             "required": ["query"],
         },
     }
 
-    def handler(args_or_query, provider: str = "auto", count: int = 5, depth: str = "normal", **kwargs) -> str:
+    def handler(args_or_query, provider: str = "auto", count: int = 5, depth: str = "normal",
+                time_range: Optional[str] = None, include_domains: Optional[List[str]] = None,
+                exclude_domains: Optional[List[str]] = None, **kwargs) -> str:
         # Hermes registry passes the entire input dict as first positional arg
         if isinstance(args_or_query, dict):
             query = args_or_query.get("query", "")
             provider = args_or_query.get("provider", provider)
             count = args_or_query.get("count", count)
             depth = args_or_query.get("depth", depth)
+            time_range = args_or_query.get("time_range", time_range)
+            include_domains = args_or_query.get("include_domains", include_domains)
+            exclude_domains = args_or_query.get("exclude_domains", exclude_domains)
         else:
             query = args_or_query
-        data = _run_search(query=query, provider=provider, count=count, exa_depth=depth)
+        data = _run_search(
+            query=query,
+            provider=provider,
+            count=count,
+            exa_depth=depth,
+            time_range=time_range,
+            include_domains=include_domains,
+            exclude_domains=exclude_domains,
+        )
         return _format_results(data)
 
     def check_fn() -> bool:
