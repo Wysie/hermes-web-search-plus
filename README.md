@@ -1,82 +1,117 @@
 # web-search-plus — Hermes Plugin
 
-Multi-provider web search with intelligent auto-routing as a native Hermes tool.
+Multi-provider web search with intelligent auto-routing for the Hermes AI agent.
 
-Ported from [web-search-plus-plugin](https://github.com/robbyczgw-cla/web-search-plus-plugin) (OpenClaw) to the [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin architecture.
+Ported from [robbyczgw-cla/web-search-plus-plugin](https://github.com/robbyczgw-cla/web-search-plus-plugin) (OpenClaw) to the Hermes Plugin API.
+
+---
 
 ## Features
 
-- **Native Tool**: Registers `web_search_plus` directly in the Hermes tool registry
-- **Intelligent Auto-Routing**: Picks the best provider based on query intent
-- **Multi-Provider**: Serper, Tavily, Exa, Querit, Perplexity, You.com, SearXNG
-- **Caching**: File-based cache to save API credits
-- **Fallback**: Automatically tries next provider if one fails
+- **Auto-routing**: Automatically picks the best provider based on query intent
+- **Multiple providers**: Serper, Tavily, Exa, Querit, Perplexity, SearXNG
+- **Exa Deep Research**: `depth=deep` for multi-source synthesis, `depth=deep-reasoning` for cross-document analysis
+- **Caching**: Avoids duplicate API calls for repeated queries
+- **Compact output**: Formatted for LLM consumption
 
-## Supported Providers
+## Routing Logic
 
-| Provider | Best For | Free Tier | Auto-Route Trigger |
-|---|---|---|---|
-| **Serper** (Google) | Facts, news, shopping, local | 2,500/mo | "price", "buy", "news" |
-| **Tavily** | Deep research, analysis | 1,000/mo | "how does", "explain" |
-| **Exa** (Neural) | Semantic discovery, similarity | 1,000/mo | "similar to", "companies like" |
-| **Querit** | Multilingual, real-time AI | 1,000/mo | Real-time info |
-| **Perplexity** | AI-synthesized answers | Via API | Direct questions |
-| **You.com** | Real-time RAG snippets | Limited | General RAG |
-| **SearXNG** | Privacy, self-hosted | Free | Manual / fallback |
+| Provider | Best for |
+|----------|----------|
+| Serper (Google) | News, shopping, facts, local queries |
+| Tavily | Research, deep content, academic topics |
+| Exa | Semantic discovery, "alternatives to X", "companies like Y", arxiv |
+| Querit | Multilingual, real-time queries |
+| Perplexity | Direct answers |
+
+Auto-routing scores each provider based on query signals and picks the highest-confidence match. You can always override with `provider=...`.
+
+---
 
 ## Installation
 
-1. Clone into your Hermes plugins directory:
-   ```bash
-   git clone https://github.com/robbyczgw-cla/hermes-web-search-plus ~/.hermes/plugins/web-search-plus
-   ```
+The plugin is loaded automatically by Hermes from `~/.hermes/plugins/web-search-plus/`.
 
-2. Configure API keys:
-   ```bash
-   cp .env.template .env
-   # Edit .env and add at least one API key
-   ```
+### API Keys
 
-3. Or set environment variables directly in `~/.hermes/.env`:
-   ```
-   SERPER_API_KEY=your-key
-   TAVILY_API_KEY=your-key
-   EXA_API_KEY=your-key
-   ```
+Set in your environment or `~/.hermes/plugins/web-search-plus/.env`:
 
-4. Restart Hermes — the plugin auto-loads from `~/.hermes/plugins/`.
+```bash
+# Required (at least one)
+SERPER_API_KEY=...       # https://serper.dev
+TAVILY_API_KEY=...       # https://tavily.com
+EXA_API_KEY=...          # https://exa.ai
 
-5. Verify with `/plugins` in the Hermes CLI.
-
-## Usage
-
-The tool is available as `web_search_plus` in the agent:
-
-```
-web_search_plus(query="your query")                    # auto-route
-web_search_plus(query="iPhone 16 price", provider="serper")
-web_search_plus(query="how does HTTPS work", provider="tavily")
-web_search_plus(query="startups like Notion", provider="exa")
+# Optional
+QUERIT_API_KEY=...       # https://querit.ai
+PERPLEXITY_API_KEY=...   # https://www.perplexity.ai/settings/api
+KILOCODE_API_KEY=...     # fallback for Perplexity via Kilo Gateway
+YOU_API_KEY=...          # https://api.you.com
+SEARXNG_INSTANCE_URL=... # self-hosted SearXNG instance
 ```
 
-## Plugin vs MCP
+---
 
-This plugin uses the native Hermes Plugin API (drop into `~/.hermes/plugins/`) rather than MCP. Benefits:
-- No extra process spawning
-- Direct tool registry integration
-- Same API keys reused from `~/.hermes/.env`
+## Tool: `web_search_plus`
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `query` | string | required | The search query |
+| `provider` | string | `"auto"` | Force a provider: `serper`, `tavily`, `exa`, `querit`, `perplexity`, `searxng`, or `auto` |
+| `depth` | string | `"normal"` | Exa depth mode: `normal`, `deep` (4-12s), `deep-reasoning` (12-50s) |
+| `count` | integer | `5` | Number of results (1-20) |
+
+### Examples
+
+```
+# Auto-routing (default)
+web_search_plus(query="Graz weather today")
+
+# Force Exa for semantic discovery
+web_search_plus(query="alternatives to Notion", provider="exa")
+
+# Exa deep research
+web_search_plus(query="impact of LLMs on software development", provider="exa", depth="deep")
+
+# Exa deep reasoning for complex analysis
+web_search_plus(query="reconcile conflicting claims about transformer scaling laws", provider="exa", depth="deep-reasoning")
+
+# Force Serper for news
+web_search_plus(query="OpenAI latest news", provider="serper")
+```
+
+---
+
+## Hermes Plugin API Notes
+
+The Hermes registry calls handlers with the full input dict as the first positional argument (not as `**kwargs`). The handler in `__init__.py` accounts for this by checking `isinstance(args_or_query, dict)` and unpacking accordingly.
+
+Timeout is set to **65 seconds** to accommodate Exa deep-reasoning queries which can take 12-50s.
+
+---
 
 ## Architecture
 
 ```
-~/.hermes/plugins/web-search-plus/
-├── plugin.yaml      # Hermes plugin manifest
-├── __init__.py      # register(ctx) — Hermes Plugin API entry point
-├── search.py        # Core search logic (all providers, auto-routing, caching)
-├── .env.template    # API key template (copy to .env)
-└── .gitignore       # Keeps .env and cache out of git
+__init__.py          — Hermes plugin entry point, tool registration, handler
+search.py            — Core search engine (all providers, routing logic, ~2600 lines)
+plugin.yaml          — Plugin manifest (name, version, toolsets)
+.env.template        — API key template
 ```
 
-## License
+The plugin calls `search.py` as a subprocess, passing query parameters as CLI args and forwarding all env vars.
 
-MIT
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Related
+
+- [OpenClaw plugin](https://github.com/robbyczgw-cla/web-search-plus-plugin) — original TypeScript version for OpenClaw
+- Hermes repo: `robbyczgw-cla/hermes-web-search-plus`

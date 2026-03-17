@@ -15,7 +15,7 @@ from typing import Any
 _SEARCH_SCRIPT = Path(__file__).parent / "search.py"
 
 
-def _run_search(query: str, provider: str = "auto", count: int = 5) -> dict:
+def _run_search(query: str, provider: str = "auto", count: int = 5, exa_depth: str = "normal") -> dict:
     """Call search.py subprocess and return parsed JSON result."""
     cmd = [
         sys.executable,
@@ -25,6 +25,8 @@ def _run_search(query: str, provider: str = "auto", count: int = 5) -> dict:
         "--max-results", str(count),
         "--compact",
     ]
+    if exa_depth != "normal":
+        cmd += ["--exa-depth", exa_depth]
 
     # Forward all relevant API keys from environment
     env = os.environ.copy()
@@ -34,7 +36,7 @@ def _run_search(query: str, provider: str = "auto", count: int = 5) -> dict:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=65,
             env=env,
         )
         if result.returncode != 0:
@@ -119,6 +121,12 @@ def register(ctx: Any) -> None:
                     "description": "Search provider. Use 'auto' for intelligent routing (default).",
                     "default": "auto",
                 },
+                "depth": {
+                    "type": "string",
+                    "enum": ["normal", "deep", "deep-reasoning"],
+                    "description": "Exa search depth: 'deep' synthesizes across sources (4-12s), 'deep-reasoning' for complex cross-document analysis (12-50s). Only applies when routed to Exa.",
+                    "default": "normal",
+                },
                 "count": {
                     "type": "integer",
                     "description": "Number of results to return (default: 5)",
@@ -131,8 +139,16 @@ def register(ctx: Any) -> None:
         },
     }
 
-    def handler(query: str, provider: str = "auto", count: int = 5) -> str:
-        data = _run_search(query=query, provider=provider, count=count)
+    def handler(args_or_query, provider: str = "auto", count: int = 5, depth: str = "normal", **kwargs) -> str:
+        # Hermes registry passes the entire input dict as first positional arg
+        if isinstance(args_or_query, dict):
+            query = args_or_query.get("query", "")
+            provider = args_or_query.get("provider", provider)
+            count = args_or_query.get("count", count)
+            depth = args_or_query.get("depth", depth)
+        else:
+            query = args_or_query
+        data = _run_search(query=query, provider=provider, count=count, exa_depth=depth)
         return _format_results(data)
 
     def check_fn() -> bool:
