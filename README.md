@@ -190,4 +190,4 @@ See [CHANGELOG.md](CHANGELOG.md).
 ## Related
 
 - [OpenClaw plugin](https://github.com/robbyczgw-cla/web-search-plus-plugin) — original TypeScript version for OpenClaw
-- Hermes repo: [robbyczgw-cla/hermes-web-search-plus](https://github.com/robbyczgw-cla/hermes-web-search-plus)
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent) — the agent this plugin runs on
