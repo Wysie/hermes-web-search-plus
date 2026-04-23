@@ -12,6 +12,7 @@ Multi-provider web search with intelligent auto-routing for [Hermes Agent](https
 git clone https://github.com/robbyczgw-cla/hermes-web-search-plus.git ~/.hermes/plugins/web-search-plus
 cd ~/.hermes/hermes-agent
 source venv/bin/activate
+pip install requests
 cd ~/.hermes/plugins/web-search-plus
 cp .env.template .env          # fill in at least one provider key
 # Optional: pip install httpx  # only needed for Exa deep/deep-reasoning
@@ -30,6 +31,15 @@ plugins:
     - web-search-plus
 ```
 
+Also enable the plugin toolset alongside the built-in `web` toolset so both are available:
+
+```yaml
+tools:
+  enabled:
+    - web
+    - web-search-plus
+```
+
 Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_search_plus`.
 
 ---
@@ -37,7 +47,7 @@ Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_
 ## Features
 
 - **Intelligent auto-routing** — picks the best provider based on query intent
-- **7 providers** — Serper, Tavily, Exa, Querit, Perplexity, You.com, SearXNG
+- **8 providers** — Serper, Brave, Tavily, Exa, Querit, Perplexity, You.com, SearXNG
 - **Exa Deep Research** — `depth=deep` for multi-source synthesis, `depth=deep-reasoning` for cross-document analysis
 - **Adaptive fallback** — automatically skips providers on cooldown (1h after failure)
 - **Routing transparency** — every response includes a `routing` object explaining provider choice
@@ -50,6 +60,7 @@ Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_
 
 | Provider | Best for | Free tier |
 |----------|----------|-----------|
+| Brave | General-purpose web search, independent index, broad factual queries | $5.00/mo in free credits |
 | Serper (Google) | News, shopping, facts, local queries | 2,500/mo |
 | Tavily | Research, deep content, academic | 1,000/mo |
 | Exa | Semantic discovery, "alternatives to X", arxiv | 1,000/mo |
@@ -58,7 +69,7 @@ Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_
 | You.com | LLM-ready real-time snippets | Limited |
 | SearXNG | Privacy-focused, self-hosted, no API cost | Free |
 
-Auto-routing scores providers based on query signals (keywords, intent, linguistic patterns). Every response includes a `routing` field explaining why a provider was chosen. Override anytime with `provider="serper"` etc.
+Auto-routing scores providers based on query signals (keywords, intent, linguistic patterns). Brave and Serper share generic web-search intents; when they tie, the router uses deterministic per-query tie-breaking so the same query stays reproducible while ties are distributed across both providers. Override anytime with `provider="serper"`, `provider="brave"`, etc.
 
 ---
 
@@ -68,9 +79,10 @@ Auto-routing scores providers based on query signals (keywords, intent, linguist
 
 ```bash
 # Required (at least one)
-SERPER_API_KEY=your-key        # https://serper.dev — 2,500 free/mo
-TAVILY_API_KEY=your-key        # https://tavily.com — 1,000 free/mo
-EXA_API_KEY=your-key           # https://exa.ai — 1,000 free/mo
+SERPER_API_KEY=***        # https://serper.dev — 2,500 free/mo
+BRAVE_API_KEY=***         # https://brave.com/search/api/ — $5.00/mo in free credits; you won't be charged
+TAVILY_API_KEY=***        # https://tavily.com — 1,000 free/mo
+EXA_API_KEY=***           # https://exa.ai — 1,000 free/mo
 
 # Optional
 QUERIT_API_KEY=your-key        # https://querit.ai
@@ -91,7 +103,7 @@ SEARXNG_INSTANCE_URL=https://your-instance.example.com
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `query` | string | **required** | The search query |
-| `provider` | string | `"auto"` | Force: `serper`, `tavily`, `exa`, `querit`, `perplexity`, `you`, `searxng` |
+| `provider` | string | `"auto"` | Force: `serper`, `brave`, `tavily`, `exa`, `querit`, `perplexity`, `you`, `searxng` |
 | `depth` | string | `"normal"` | Exa only: `normal`, `deep`, `deep-reasoning` |
 | `count` | integer | `5` | Results (1–20) |
 | `time_range` | string | — | `day`, `week`, `month`, `year` |
@@ -102,7 +114,10 @@ SEARXNG_INSTANCE_URL=https://your-instance.example.com
 
 ```python
 web_search_plus(query="Graz weather today")
-# → auto-routed to Serper (local/weather intent)
+# → auto-routed to Serper or Brave (generic weather/current-info intent)
+
+web_search_plus(query="Singapore CPI latest", provider="brave")
+# → Brave Search (independent general web index)
 
 web_search_plus(query="alternatives to Notion", provider="exa")
 # → Exa (discovery/similarity)

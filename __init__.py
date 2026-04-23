@@ -13,6 +13,17 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 _SEARCH_SCRIPT = Path(__file__).parent / "search.py"
+_TOOLSET_NAME = "web-search-plus"
+_PROVIDER_ENV_KEYS = [
+    "SERPER_API_KEY",
+    "BRAVE_API_KEY",
+    "TAVILY_API_KEY",
+    "EXA_API_KEY",
+    "QUERIT_API_KEY",
+    "PERPLEXITY_API_KEY",
+    "YOU_API_KEY",
+    "SEARXNG_INSTANCE_URL",
+]
 
 
 def _load_plugin_env() -> None:
@@ -137,7 +148,7 @@ def register(ctx: Any) -> None:
             "Set depth='deep' for Exa multi-source synthesis, 'deep-reasoning' for complex cross-document analysis. "
             "Override with provider param if needed."
         ),
-        "input_schema": {
+        "parameters": {
             "type": "object",
             "properties": {
                 "query": {
@@ -146,8 +157,8 @@ def register(ctx: Any) -> None:
                 },
                 "provider": {
                     "type": "string",
-                    "enum": ["auto", "serper", "tavily", "exa", "querit", "perplexity", "you", "searxng"],
-                    "description": "Search provider. Use 'auto' for intelligent routing (default).",
+                    "enum": ["auto", "serper", "brave", "tavily", "exa", "querit", "perplexity", "you", "searxng"],
+                    "description": "Search provider. Use 'auto' for intelligent routing (default). Brave and Serper share generic web-search intents and ties are distributed deterministically per query.",
                     "default": "auto",
                 },
                 "depth": {
@@ -209,17 +220,16 @@ def register(ctx: Any) -> None:
         return _format_results(data)
 
     def check_fn() -> bool:
-        """Plugin is available if at least one API key is configured."""
-        keys = ["SERPER_API_KEY", "TAVILY_API_KEY", "EXA_API_KEY", "QUERIT_API_KEY"]
-        return any(os.environ.get(k) for k in keys)
+        """Plugin is available if at least one provider credential is configured."""
+        return any(os.environ.get(k) for k in _PROVIDER_ENV_KEYS)
 
     ctx.register_tool(
         name="web_search_plus",
-        toolset="web",
+        toolset=_TOOLSET_NAME,
         schema=schema,
         handler=handler,
         check_fn=check_fn,
-        requires_env=["SERPER_API_KEY"],
+        requires_env=[],
         description="Multi-provider web search with intelligent auto-routing",
         emoji="🔍",
     )
