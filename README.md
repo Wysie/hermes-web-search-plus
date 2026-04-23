@@ -10,12 +10,36 @@ Multi-provider web search with intelligent auto-routing for [Hermes Agent](https
 
 ```bash
 git clone https://github.com/robbyczgw-cla/hermes-web-search-plus.git ~/.hermes/plugins/web-search-plus
+cd ~/.hermes/hermes-agent
+source venv/bin/activate
 cd ~/.hermes/plugins/web-search-plus
-cp .env.template .env          # fill in at least SERPER_API_KEY
-pip install requests
+cp .env.template .env          # fill in at least one provider key
+# Optional: pip install httpx  # only needed for Exa deep/deep-reasoning
 ```
 
-That's it. Start Hermes and use `web_search_plus`.
+Important:
+- Use the Hermes virtualenv, not your system Python.
+- Run `pip` only after `source ~/.hermes/hermes-agent/venv/bin/activate` (or from `~/.hermes/hermes-agent` via `source venv/bin/activate`).
+- If you test the plugin from the CLI, prefer `~/.hermes/hermes-agent/venv/bin/python` or activate the Hermes venv first.
+
+Then enable the plugin in `~/.hermes/config.yaml`:
+
+```yaml
+plugins:
+  enabled:
+    - web-search-plus
+```
+
+Also enable the plugin toolset alongside the built-in `web` toolset so both are available:
+
+```yaml
+tools:
+  enabled:
+    - web
+    - web-search-plus
+```
+
+Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_search_plus`.
 
 ---
 
