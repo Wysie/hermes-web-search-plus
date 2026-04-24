@@ -47,7 +47,7 @@ Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_
 ## Features
 
 - **Intelligent auto-routing** — picks the best provider based on query intent
-- **8 providers** — Serper, Brave, Tavily, Exa, Querit, Perplexity, You.com, SearXNG
+- **9 providers** — Serper, Brave, Tavily, Exa, Querit, Firecrawl, Perplexity, You.com, SearXNG
 - **Exa Deep Research** — `depth=deep` for multi-source synthesis, `depth=deep-reasoning` for cross-document analysis
 - **Adaptive fallback** — automatically skips providers on cooldown (1h after failure)
 - **Routing transparency** — every response includes a `routing` object explaining provider choice
@@ -65,6 +65,7 @@ Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use `web_
 | Tavily | Research, deep content, academic | 1,000/mo |
 | Exa | Semantic discovery, "alternatives to X", arxiv | 1,000/mo |
 | Querit | Multilingual, real-time queries | 1,000/mo |
+| Firecrawl | Web search with optional scrape-ready result content | 500 credits/free plan |
 | Perplexity | Direct AI-synthesized answers | API key |
 | You.com | LLM-ready real-time snippets | Limited |
 | SearXNG | Privacy-focused, self-hosted, no API cost | Free |
@@ -103,7 +104,7 @@ SEARXNG_INSTANCE_URL=https://your-instance.example.com
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `query` | string | **required** | The search query |
-| `provider` | string | `"auto"` | Force: `serper`, `brave`, `tavily`, `exa`, `querit`, `perplexity`, `you`, `searxng` |
+| `provider` | string | `"auto"` | Force: `serper`, `brave`, `tavily`, `exa`, `querit`, `firecrawl`, `perplexity`, `you`, `searxng` |
 | `depth` | string | `"normal"` | Exa only: `normal`, `deep`, `deep-reasoning` |
 | `count` | integer | `5` | Results (1–20) |
 | `time_range` | string | — | `day`, `week`, `month`, `year` |
@@ -126,7 +127,10 @@ web_search_plus(query="LLM scaling laws research", provider="exa", depth="deep")
 # → Exa deep synthesis (4–12s)
 
 web_search_plus(query="OpenAI news", time_range="day")
-# → Serper, last 24h
+# → Serper/Brave/Firecrawl, last 24h
+
+web_search_plus(query="YC startups web scraping", provider="firecrawl")
+# → Firecrawl search
 
 web_search_plus(query="LoRA fine-tuning", include_domains=["arxiv.org"])
 # → arxiv only

@@ -277,7 +277,7 @@ DEFAULT_CONFIG = {
     "auto_routing": {
         "enabled": True,
         "fallback_provider": "serper",
-        "provider_priority": ["tavily", "querit", "exa", "perplexity", "brave", "serper", "you", "searxng"],
+        "provider_priority": ["tavily", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"],
         "disabled_providers": [],
         "confidence_threshold": 0.3,  # Below this, note low confidence
     },
@@ -308,6 +308,13 @@ DEFAULT_CONFIG = {
     "perplexity": {
         "api_url": "https://api.kilo.ai/api/gateway/chat/completions",
         "model": "perplexity/sonar-pro"
+    },
+    "firecrawl": {
+        "api_url": "https://api.firecrawl.dev/v2/search",
+        "country": "US",
+        "timeout": 30000,
+        "sources": ["web"],
+        "ignore_invalid_urls": False
     },
     "you": {
         "country": "us",
@@ -374,6 +381,7 @@ def get_api_key(provider: str, config: Dict[str, Any] = None) -> Optional[str]:
         "querit": "QUERIT_API_KEY",
         "exa": "EXA_API_KEY",
         "you": "YOU_API_KEY",
+        "firecrawl": "FIRECRAWL_API_KEY",
     }
     return os.environ.get(key_map.get(provider, ""))
 
@@ -493,7 +501,8 @@ def validate_api_key(provider: str, config: Dict[str, Any] = None) -> str:
             "querit": "QUERIT_API_KEY",
             "exa": "EXA_API_KEY",
             "you": "YOU_API_KEY",
-            "perplexity": "KILOCODE_API_KEY"
+            "perplexity": "KILOCODE_API_KEY",
+            "firecrawl": "FIRECRAWL_API_KEY"
         }[provider]
         
         urls = {
@@ -503,7 +512,8 @@ def validate_api_key(provider: str, config: Dict[str, Any] = None) -> str:
             "querit": "https://querit.ai",
             "exa": "https://exa.ai",
             "you": "https://api.you.com",
-            "perplexity": "https://api.kilo.ai"
+            "perplexity": "https://api.kilo.ai",
+            "firecrawl": "https://www.firecrawl.dev/app/api-keys"
         }
         
         error_msg = {
@@ -1185,6 +1195,7 @@ class QueryAnalyzer:
             "perplexity": direct_answer_score + (local_news_score * 0.4) + (recency_score * 0.55),
             "you": rag_score + (recency_score * 0.25),  # You.com good for real-time + RAG
             "searxng": privacy_score,  # SearXNG for privacy/multi-source queries
+            "firecrawl": discovery_score + (research_score * 0.35) + (recency_score * 0.25),
         }
         
         # Build match details per provider
@@ -1197,6 +1208,7 @@ class QueryAnalyzer:
             "perplexity": direct_answer_matches,
             "you": rag_matches,
             "searxng": privacy_matches,
+            "firecrawl": discovery_matches + research_matches,
         }
         
         return {
@@ -1243,7 +1255,7 @@ class QueryAnalyzer:
         total_score = sum(available.values()) or 1.0
         
         # Handle ties using deterministic per-query distribution
-        priority = self.auto_config.get("provider_priority", ["tavily", "querit", "exa", "perplexity", "brave", "serper", "you", "searxng"])
+        priority = self.auto_config.get("provider_priority", ["tavily", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"])
         winners = [p for p, s in available.items() if s == max_score]
         
         if len(winners) > 1:
@@ -1359,6 +1371,7 @@ def explain_routing(query: str, config: Dict[str, Any]) -> Dict[str, Any]:
             "rag_signals": len(analysis["provider_matches"]["you"]),
             "exa_deep_score": round(analysis.get("exa_deep_score", 0), 2),
             "exa_deep_reasoning_score": round(analysis.get("exa_deep_reasoning_score", 0), 2),
+            "firecrawl_signals": len(analysis["provider_matches"].get("firecrawl", [])),
         },
         "query_analysis": {
             "word_count": analysis["complexity"]["word_count"],
@@ -1376,7 +1389,7 @@ def explain_routing(query: str, config: Dict[str, Any]) -> Dict[str, Any]:
             if matches
         },
         "available_providers": [
-            p for p in ["serper", "brave", "tavily", "querit", "exa", "perplexity", "you", "searxng"]
+            p for p in ["serper", "brave", "tavily", "querit", "exa", "firecrawl", "perplexity", "you", "searxng"]
             if get_api_key(p, config) and p not in config.get("auto_routing", {}).get("disabled_providers", [])
         ]
     }
@@ -1935,6 +1948,120 @@ def search_querit(
             "search_id": data.get("search_id"),
             "time_range": querit_time_range,
         }
+    }
+
+
+# =============================================================================
+# Firecrawl Search
+# =============================================================================
+
+def _map_firecrawl_time_range(time_range: Optional[str]) -> Optional[str]:
+    """Map generic time ranges to Firecrawl/Google tbs values."""
+    if not time_range:
+        return None
+    return {
+        "hour": "qdr:h",
+        "day": "qdr:d",
+        "week": "qdr:w",
+        "month": "qdr:m",
+        "year": "qdr:y",
+    }.get(time_range, time_range)
+
+
+def search_firecrawl(
+    query: str,
+    api_key: str,
+    max_results: int = 5,
+    country: str = "US",
+    time_range: Optional[str] = None,
+    sources: Optional[List[str]] = None,
+    include_domains: Optional[List[str]] = None,
+    exclude_domains: Optional[List[str]] = None,
+    scrape_markdown: bool = False,
+    ignore_invalid_urls: bool = False,
+    api_url: str = "https://api.firecrawl.dev/v2/search",
+    timeout_ms: int = 30000,
+) -> dict:
+    """Search using Firecrawl's v2 search endpoint."""
+    selected_sources = sources or ["web"]
+    body: Dict[str, Any] = {
+        "query": query,
+        "limit": max_results,
+        "sources": selected_sources,
+        "timeout": timeout_ms,
+        "ignoreInvalidURLs": ignore_invalid_urls,
+    }
+
+    if country:
+        body["country"] = country.upper()
+
+    tbs = _map_firecrawl_time_range(time_range)
+    if tbs:
+        body["tbs"] = tbs
+
+    if include_domains:
+        body["query"] += " " + " ".join(f"site:{domain}" for domain in include_domains)
+    if exclude_domains:
+        body["query"] += " " + " ".join(f"-site:{domain}" for domain in exclude_domains)
+
+    if scrape_markdown:
+        body["scrapeOptions"] = {"formats": ["markdown"]}
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    data = make_request(api_url, headers, body, timeout=max(1, int(timeout_ms / 1000)))
+    if data.get("success") is False:
+        raise ProviderRequestError(data.get("error") or data.get("warning") or "Firecrawl request failed")
+
+    response_data = data.get("data") or {}
+    raw_web = response_data.get("web") or []
+    results = []
+    for i, item in enumerate(raw_web[:max_results]):
+        snippet = item.get("description") or item.get("snippet") or ""
+        result = {
+            "title": item.get("title") or _title_from_url(item.get("url", "")),
+            "url": item.get("url", ""),
+            "snippet": snippet,
+            "score": round(1.0 - i * 0.05, 3),
+        }
+        if item.get("position") is not None:
+            result["position"] = item.get("position")
+        if item.get("category") is not None:
+            result["category"] = item.get("category")
+        if item.get("markdown"):
+            result["raw_content"] = item["markdown"]
+            if not result["snippet"]:
+                result["snippet"] = item["markdown"][:500]
+        metadata = item.get("metadata") or {}
+        if metadata.get("statusCode") is not None:
+            result["status_code"] = metadata.get("statusCode")
+        if metadata.get("error"):
+            result["error"] = metadata.get("error")
+        results.append(result)
+
+    images = []
+    for image in response_data.get("images") or []:
+        image_url = image.get("imageUrl")
+        if image_url:
+            images.append(image_url)
+
+    answer = results[0]["snippet"] if results else ""
+    return {
+        "provider": "firecrawl",
+        "query": query,
+        "results": results,
+        "images": images,
+        "answer": answer,
+        "warning": data.get("warning"),
+        "credits_used": data.get("creditsUsed"),
+        "metadata": {
+            "id": data.get("id"),
+            "sources": selected_sources,
+            "tbs": tbs,
+        },
     }
 
 
@@ -2562,7 +2689,7 @@ Full docs: See README.md and SKILL.md
     # Common arguments
     parser.add_argument(
         "--provider", "-p", 
-        choices=["serper", "brave", "tavily", "querit", "exa", "perplexity", "you", "searxng", "auto"],
+        choices=["serper", "brave", "tavily", "querit", "exa", "firecrawl", "perplexity", "you", "searxng", "auto"],
         help="Search provider (auto=intelligent routing)"
     )
     parser.add_argument(
@@ -2665,6 +2792,21 @@ Full docs: See README.md and SKILL.md
     parser.add_argument("--start-date")
     parser.add_argument("--end-date")
     parser.add_argument("--similar-url")
+
+    # Firecrawl-specific
+    firecrawl_config = config.get("firecrawl", {})
+    parser.add_argument(
+        "--firecrawl-scrape",
+        action="store_true",
+        help="Firecrawl: scrape result pages and include markdown as raw_content"
+    )
+    parser.add_argument(
+        "--firecrawl-sources",
+        nargs="+",
+        default=firecrawl_config.get("sources", ["web"]),
+        choices=["web", "news", "images"],
+        help="Firecrawl result sources"
+    )
     
     # You.com-specific
     you_config = config.get("you", {})
@@ -2802,7 +2944,7 @@ Full docs: See README.md and SKILL.md
     
     # Build provider fallback list
     auto_config = config.get("auto_routing", {})
-    provider_priority = auto_config.get("provider_priority", ["tavily", "querit", "exa", "perplexity", "brave", "serper", "you", "searxng"])
+    provider_priority = auto_config.get("provider_priority", ["tavily", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"])
     disabled_providers = auto_config.get("disabled_providers", [])
 
     # Start with the selected provider, then try others in priority order
@@ -2895,6 +3037,22 @@ Full docs: See README.md and SKILL.md
                 include_domains=args.include_domains,
                 exclude_domains=args.exclude_domains,
                 text_verbosity=args.exa_verbosity,
+            )
+        elif prov == "firecrawl":
+            firecrawl_config = config.get("firecrawl", {})
+            return search_firecrawl(
+                query=args.query,
+                api_key=key,
+                max_results=args.max_results,
+                country=firecrawl_config.get("country", args.country),
+                time_range=args.time_range or args.freshness,
+                sources=args.firecrawl_sources,
+                include_domains=args.include_domains,
+                exclude_domains=args.exclude_domains,
+                scrape_markdown=args.firecrawl_scrape or args.raw_content,
+                ignore_invalid_urls=firecrawl_config.get("ignore_invalid_urls", False),
+                api_url=firecrawl_config.get("api_url", "https://api.firecrawl.dev/v2/search"),
+                timeout_ms=int(firecrawl_config.get("timeout", 30000)),
             )
         elif prov == "perplexity":
             perplexity_config = config.get("perplexity", {})

@@ -20,6 +20,7 @@ _PROVIDER_ENV_KEYS = [
     "TAVILY_API_KEY",
     "EXA_API_KEY",
     "QUERIT_API_KEY",
+    "FIRECRAWL_API_KEY",
     "PERPLEXITY_API_KEY",
     "YOU_API_KEY",
     "SEARXNG_INSTANCE_URL",
@@ -144,6 +145,7 @@ def register(ctx: Any) -> None:
             "Automatically selects the best provider based on query intent: "
             "Serper for shopping/news/facts, Tavily for research/analysis, "
             "Exa for semantic discovery, Querit for multilingual/real-time, "
+            "Firecrawl for web search plus optional scrape-ready results, "
             "Perplexity for direct answers. "
             "Set depth='deep' for Exa multi-source synthesis, 'deep-reasoning' for complex cross-document analysis. "
             "Override with provider param if needed."
@@ -157,7 +159,7 @@ def register(ctx: Any) -> None:
                 },
                 "provider": {
                     "type": "string",
-                    "enum": ["auto", "serper", "brave", "tavily", "exa", "querit", "perplexity", "you", "searxng"],
+                    "enum": ["auto", "serper", "brave", "tavily", "exa", "querit", "firecrawl", "perplexity", "you", "searxng"],
                     "description": "Search provider. Use 'auto' for intelligent routing (default). Brave and Serper share generic web-search intents and ties are distributed deterministically per query.",
                     "default": "auto",
                 },
