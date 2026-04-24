@@ -277,7 +277,7 @@ DEFAULT_CONFIG = {
     "auto_routing": {
         "enabled": True,
         "fallback_provider": "serper",
-        "provider_priority": ["tavily", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"],
+        "provider_priority": ["tavily", "linkup", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"],
         "disabled_providers": [],
         "confidence_threshold": 0.3,  # Below this, note low confidence
     },
@@ -299,6 +299,12 @@ DEFAULT_CONFIG = {
         "base_url": "https://api.querit.ai",
         "base_path": "/v1/search",
         "timeout": 10
+    },
+    "linkup": {
+        "api_url": "https://api.linkup.so/v1/search",
+        "depth": "standard",
+        "output_type": "searchResults",
+        "timeout": 30
     },
     "exa": {
         "type": "neural",
@@ -379,6 +385,7 @@ def get_api_key(provider: str, config: Dict[str, Any] = None) -> Optional[str]:
         "brave": "BRAVE_API_KEY",
         "tavily": "TAVILY_API_KEY",
         "querit": "QUERIT_API_KEY",
+        "linkup": "LINKUP_API_KEY",
         "exa": "EXA_API_KEY",
         "you": "YOU_API_KEY",
         "firecrawl": "FIRECRAWL_API_KEY",
@@ -499,6 +506,7 @@ def validate_api_key(provider: str, config: Dict[str, Any] = None) -> str:
             "brave": "BRAVE_API_KEY",
             "tavily": "TAVILY_API_KEY",
             "querit": "QUERIT_API_KEY",
+            "linkup": "LINKUP_API_KEY",
             "exa": "EXA_API_KEY",
             "you": "YOU_API_KEY",
             "perplexity": "KILOCODE_API_KEY",
@@ -510,6 +518,7 @@ def validate_api_key(provider: str, config: Dict[str, Any] = None) -> str:
             "brave": "https://brave.com/search/api/",
             "tavily": "https://tavily.com",
             "querit": "https://querit.ai",
+            "linkup": "https://app.linkup.so",
             "exa": "https://exa.ai",
             "you": "https://api.you.com",
             "perplexity": "https://api.kilo.ai",
@@ -792,6 +801,30 @@ class QueryAnalyzer:
         r'\bnachrichten\b': 3.0,
     }
     
+    # Source-grounded/RAG retrieval signals → Linkup
+    # Linkup is strongest when the user wants source-backed evidence for LLM grounding.
+    LINKUP_SOURCE_SIGNALS = {
+        r'\bcitations?\b': 5.0,
+        r'\bsources?\b': 4.5,
+        r'\bsource.?backed\b': 5.0,
+        r'\bwith sources\b': 5.0,
+        r'\bwith references\b': 5.0,
+        r'\breferences?\b': 4.5,
+        r'\bevidence\b': 4.5,
+        r'\bcredible sources?\b': 5.5,
+        r'\bprimary sources?\b': 5.0,
+        r'\bsupporting links?\b': 4.5,
+        r'\bverify (this|the)?\b': 4.5,
+        r'\bfact.?check\b': 5.0,
+        r'\bground(ed|ing)?\b': 4.5,
+        r'\bground this\b': 5.0,
+        r'\bclaim\b': 2.5,
+        r'\bfind (credible )?sources?\b': 5.5,
+        r'\bfind pages? that support\b': 5.0,
+        r'\bwhere did this come from\b': 5.0,
+        r'\bsource material\b': 4.0,
+    }
+
     # RAG/AI signals → You.com
     # You.com excels at providing LLM-ready snippets and combined web+news
     RAG_SIGNALS = {
@@ -1142,6 +1175,9 @@ class QueryAnalyzer:
         privacy_score, privacy_matches = self._calculate_signal_score(
             query, self.PRIVACY_SIGNALS
         )
+        linkup_source_score, linkup_source_matches = self._calculate_signal_score(
+            query, self.LINKUP_SOURCE_SIGNALS
+        )
         direct_answer_score, direct_answer_matches = self._calculate_signal_score(
             query, self.DIRECT_ANSWER_SIGNALS
         )
@@ -1191,6 +1227,7 @@ class QueryAnalyzer:
             "brave": shopping_score + local_news_score + (recency_score * 0.35),
             "tavily": research_score + (complexity["complexity_score"] if not complexity["is_complex"] else 0) + (0.2 * recency_score),
             "querit": (research_score * 0.65) + (rag_score * 0.35) + (recency_score * 0.45),
+            "linkup": linkup_source_score + (rag_score * 0.7) + (research_score * 0.45) + (recency_score * 0.35),
             "exa": discovery_score + (1.0 if re.search(r"\b(similar|alternatives?|examples?)\b", query, re.IGNORECASE) else 0.0) + (exa_deep_score * 0.5) + (exa_deep_reasoning_score * 0.5),
             "perplexity": direct_answer_score + (local_news_score * 0.4) + (recency_score * 0.55),
             "you": rag_score + (recency_score * 0.25),  # You.com good for real-time + RAG
@@ -1204,6 +1241,7 @@ class QueryAnalyzer:
             "brave": shopping_matches + local_news_matches,
             "tavily": research_matches,
             "querit": research_matches,
+            "linkup": linkup_source_matches + rag_matches + research_matches,
             "exa": discovery_matches + exa_deep_matches + exa_deep_reasoning_matches,
             "perplexity": direct_answer_matches,
             "you": rag_matches,
@@ -1219,6 +1257,7 @@ class QueryAnalyzer:
             "complexity": complexity,
             "recency_focused": is_recency,
             "recency_score": recency_score,
+            "linkup_source_score": linkup_source_score,
             "exa_deep_score": exa_deep_score,
             "exa_deep_reasoning_score": exa_deep_reasoning_score,
         }
@@ -1255,7 +1294,7 @@ class QueryAnalyzer:
         total_score = sum(available.values()) or 1.0
         
         # Handle ties using deterministic per-query distribution
-        priority = self.auto_config.get("provider_priority", ["tavily", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"])
+        priority = self.auto_config.get("provider_priority", ["tavily", "linkup", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"])
         winners = [p for p, s in available.items() if s == max_score]
         
         if len(winners) > 1:
@@ -1367,6 +1406,8 @@ def explain_routing(query: str, config: Dict[str, Any]) -> Dict[str, Any]:
             "brave_signals": len(analysis["provider_matches"]["brave"]),
             "research_signals": len(analysis["provider_matches"]["tavily"]),
             "querit_signals": len(analysis["provider_matches"]["querit"]),
+            "linkup_signals": len(analysis["provider_matches"].get("linkup", [])),
+            "linkup_source_score": round(analysis.get("linkup_source_score", 0), 2),
             "discovery_signals": len(analysis["provider_matches"]["exa"]),
             "rag_signals": len(analysis["provider_matches"]["you"]),
             "exa_deep_score": round(analysis.get("exa_deep_score", 0), 2),
@@ -1389,7 +1430,7 @@ def explain_routing(query: str, config: Dict[str, Any]) -> Dict[str, Any]:
             if matches
         },
         "available_providers": [
-            p for p in ["serper", "brave", "tavily", "querit", "exa", "firecrawl", "perplexity", "you", "searxng"]
+            p for p in ["serper", "brave", "tavily", "linkup", "querit", "exa", "firecrawl", "perplexity", "you", "searxng"]
             if get_api_key(p, config) and p not in config.get("auto_routing", {}).get("disabled_providers", [])
         ]
     }
@@ -1948,6 +1989,70 @@ def search_querit(
             "search_id": data.get("search_id"),
             "time_range": querit_time_range,
         }
+    }
+
+
+# =============================================================================
+# Linkup Search
+# =============================================================================
+
+def search_linkup(
+    query: str,
+    api_key: str,
+    max_results: int = 5,
+    depth: str = "standard",
+    output_type: str = "searchResults",
+    include_domains: Optional[List[str]] = None,
+    exclude_domains: Optional[List[str]] = None,
+    api_url: str = "https://api.linkup.so/v1/search",
+    timeout: int = 30,
+) -> dict:
+    """Search using Linkup's source-grounded web search API."""
+    body: Dict[str, Any] = {
+        "q": query,
+        "depth": depth,
+        "outputType": output_type,
+    }
+    if include_domains:
+        body["includeDomains"] = include_domains[:50]
+    if exclude_domains:
+        body["excludeDomains"] = exclude_domains[:50]
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    data = make_request(api_url, headers, body, timeout=timeout)
+    if data.get("error"):
+        raise ProviderRequestError(str(data.get("error")))
+
+    raw_results = data.get("results") or data.get("sources") or []
+    results = []
+    for i, item in enumerate(raw_results[:max_results]):
+        snippet = item.get("content") or item.get("snippet") or item.get("description") or ""
+        result = {
+            "title": item.get("name") or item.get("title") or _title_from_url(item.get("url", "")),
+            "url": item.get("url", ""),
+            "snippet": snippet,
+            "score": round(1.0 - i * 0.05, 3),
+        }
+        if item.get("type") is not None:
+            result["type"] = item["type"]
+        if item.get("favicon") is not None:
+            result["favicon"] = item["favicon"]
+        results.append(result)
+
+    return {
+        "provider": "linkup",
+        "query": query,
+        "results": results,
+        "images": data.get("images", []),
+        "answer": data.get("answer", ""),
+        "metadata": {
+            "depth": depth,
+            "output_type": output_type,
+        },
     }
 
 
@@ -2689,7 +2794,7 @@ Full docs: See README.md and SKILL.md
     # Common arguments
     parser.add_argument(
         "--provider", "-p", 
-        choices=["serper", "brave", "tavily", "querit", "exa", "firecrawl", "perplexity", "you", "searxng", "auto"],
+        choices=["serper", "brave", "tavily", "linkup", "querit", "exa", "firecrawl", "perplexity", "you", "searxng", "auto"],
         help="Search provider (auto=intelligent routing)"
     )
     parser.add_argument(
@@ -2760,6 +2865,21 @@ Full docs: See README.md and SKILL.md
         "--querit-base-path",
         default=querit_config.get("base_path", "/v1/search"),
         help="Querit API path"
+    )
+
+    # Linkup-specific
+    linkup_config = config.get("linkup", {})
+    parser.add_argument(
+        "--linkup-depth",
+        default=linkup_config.get("depth", "standard"),
+        choices=["fast", "standard", "deep"],
+        help="Linkup search depth: fast, standard, or deep"
+    )
+    parser.add_argument(
+        "--linkup-output-type",
+        default=linkup_config.get("output_type", "searchResults"),
+        choices=["searchResults", "sourcedAnswer"],
+        help="Linkup output type"
     )
 
     # Exa-specific
@@ -2944,7 +3064,7 @@ Full docs: See README.md and SKILL.md
     
     # Build provider fallback list
     auto_config = config.get("auto_routing", {})
-    provider_priority = auto_config.get("provider_priority", ["tavily", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"])
+    provider_priority = auto_config.get("provider_priority", ["tavily", "linkup", "querit", "exa", "firecrawl", "perplexity", "brave", "serper", "you", "searxng"])
     disabled_providers = auto_config.get("disabled_providers", [])
 
     # Start with the selected provider, then try others in priority order
@@ -3004,6 +3124,19 @@ Full docs: See README.md and SKILL.md
                 exclude_domains=args.exclude_domains,
                 include_images=args.images,
                 include_raw_content=args.raw_content,
+            )
+        elif prov == "linkup":
+            linkup_config = config.get("linkup", {})
+            return search_linkup(
+                query=args.query,
+                api_key=key,
+                max_results=args.max_results,
+                depth=args.linkup_depth,
+                output_type=args.linkup_output_type,
+                include_domains=args.include_domains,
+                exclude_domains=args.exclude_domains,
+                api_url=linkup_config.get("api_url", "https://api.linkup.so/v1/search"),
+                timeout=int(linkup_config.get("timeout", 30)),
             )
         elif prov == "querit":
             return search_querit(
