@@ -2317,7 +2317,85 @@ def extract_tavily(
     return {"provider": "tavily", "results": results}
 
 
-EXTRACT_PROVIDER_PRIORITY = ["firecrawl", "linkup", "tavily"]
+def extract_exa(
+    urls: List[str],
+    api_key: str,
+    output_format: str = "markdown",
+    include_images: bool = False,
+    include_raw_html: bool = False,
+    render_js: bool = False,
+    api_url: str = "https://api.exa.ai/contents",
+    timeout: int = 30,
+) -> dict:
+    """Extract URL content using Exa Contents API."""
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    body: Dict[str, Any] = {"urls": urls, "text": True}
+    data = make_request(api_url, headers, body, timeout=timeout)
+    results: List[Dict[str, Any]] = []
+    for item in data.get("results", []):
+        url = item.get("url") or item.get("id") or ""
+        content = item.get("text") or item.get("summary") or ""
+        results.append(_normalize_extract_result(
+            "exa",
+            url,
+            title=item.get("title", ""),
+            content=content,
+            raw_content=content,
+            summary=item.get("summary"),
+            highlights=item.get("highlights"),
+            published_date=item.get("publishedDate"),
+            author=item.get("author"),
+            image=item.get("image") if include_images else None,
+            favicon=item.get("favicon"),
+        ))
+    return {
+        "provider": "exa",
+        "results": results,
+        "request_id": data.get("requestId"),
+        "cost_dollars": data.get("costDollars"),
+        "statuses": data.get("statuses"),
+    }
+
+
+def extract_you(
+    urls: List[str],
+    api_key: str,
+    output_format: str = "markdown",
+    include_images: bool = False,
+    include_raw_html: bool = False,
+    render_js: bool = False,
+    api_url: str = "https://ydc-index.io/v1/contents",
+    timeout: int = 30,
+) -> dict:
+    """Extract URL content using You.com Contents API."""
+    formats = ["html" if output_format == "html" else "markdown"]
+    if include_raw_html and "html" not in formats:
+        formats.append("html")
+    if "metadata" not in formats:
+        formats.append("metadata")
+    headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
+    body = {"urls": urls, "formats": formats, "crawl_timeout": max(1, min(timeout, 60))}
+    data = make_request(api_url, headers, body, timeout=timeout)
+    raw_items = data if isinstance(data, list) else data.get("results", []) or data.get("data", [])
+    results: List[Dict[str, Any]] = []
+    for item in raw_items:
+        url = item.get("url", "")
+        markdown = item.get("markdown") or ""
+        html = item.get("html") or ""
+        content = html if output_format == "html" else markdown or html
+        results.append(_normalize_extract_result(
+            "you",
+            url,
+            title=item.get("title", ""),
+            content=content,
+            raw_content=content,
+            raw_html=html if html else None,
+            metadata=item.get("metadata"),
+        ))
+    return {"provider": "you", "results": results}
+
+
+EXTRACT_PROVIDER_PRIORITY = ["firecrawl", "linkup", "tavily", "exa", "you"]
 
 
 def extract_plus(
@@ -2349,9 +2427,15 @@ def extract_plus(
             elif prov == "linkup":
                 lu = config.get("linkup", {})
                 result = extract_linkup(urls, key, output_format, include_images, include_raw_html, render_js, api_url=lu.get("fetch_url", "https://api.linkup.so/v1/fetch"), timeout=int(lu.get("timeout", 30)))
-            else:
+            elif prov == "tavily":
                 tv = config.get("tavily", {})
                 result = extract_tavily(urls, key, output_format, include_images, include_raw_html, render_js, api_url=tv.get("extract_url", "https://api.tavily.com/extract"), timeout=int(tv.get("timeout", 30)))
+            elif prov == "exa":
+                exa = config.get("exa", {})
+                result = extract_exa(urls, key, output_format, include_images, include_raw_html, render_js, api_url=exa.get("contents_url", "https://api.exa.ai/contents"), timeout=int(exa.get("timeout", 30)))
+            else:
+                you = config.get("you", {})
+                result = extract_you(urls, key, output_format, include_images, include_raw_html, render_js, api_url=you.get("contents_url", "https://ydc-index.io/v1/contents"), timeout=int(you.get("timeout", 30)))
             result["routing"] = {"provider": prov, "fallback_used": bool(errors), "fallback_errors": errors}
             return result
         except Exception as e:

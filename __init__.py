@@ -305,13 +305,13 @@ def register(ctx: Any) -> None:
         "name": "web_extract_plus",
         "description": (
             "Multi-provider URL content extraction. Use Firecrawl for robust scraping, "
-            "Linkup for clean markdown fetches with monthly free credits, or Tavily for extraction."
+            "Linkup for clean markdown fetches with monthly free credits, Tavily for extraction, Exa Contents, or You.com Contents."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "urls": {"type": "array", "items": {"type": "string"}, "description": "URLs to extract"},
-                "provider": {"type": "string", "enum": ["auto", "firecrawl", "linkup", "tavily"], "default": "auto"},
+                "provider": {"type": "string", "enum": ["auto", "firecrawl", "linkup", "tavily", "exa", "you"], "default": "auto"},
                 "format": {"type": "string", "enum": ["markdown", "html"], "default": "markdown"},
                 "include_images": {"type": "boolean", "default": False},
                 "include_raw_html": {"type": "boolean", "default": False},

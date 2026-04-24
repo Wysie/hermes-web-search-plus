@@ -43,7 +43,7 @@ tools:
 Finally restart Hermes (or `/restart` + `/reset` in gateway chats) and use the plugin tools:
 
 - `web_search_plus` — multi-provider web search and auto-routing
-- `web_extract_plus` — provider-specific URL extraction via Firecrawl, Linkup, or Tavily
+- `web_extract_plus` — provider-specific URL extraction via Firecrawl, Linkup, Tavily, Exa, or You.com
 
 Both tools are exposed by the `web-search-plus` toolset; enabling `web-search-plus` enables both.
 
@@ -57,7 +57,7 @@ Both tools are exposed by the `web-search-plus` toolset; enabling `web-search-pl
 - **Adaptive fallback** — automatically skips providers on cooldown (1h after failure)
 - **Routing transparency** — every response includes a `routing` object explaining provider choice
 - **Time & domain filtering** — `time_range`, `include_domains`, `exclude_domains`
-- **URL extraction** — `web_extract_plus` extracts clean content via Firecrawl, Linkup, or Tavily
+- **URL extraction** — `web_extract_plus` extracts clean content via Firecrawl, Linkup, Tavily, Exa, or You.com
 - **Local caching** — avoids duplicate API calls (1h TTL)
 
 ---
@@ -127,13 +127,13 @@ Extract content from specific URLs using provider-specific extraction backends.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `urls` | string[] | **required** | URLs to extract |
-| `provider` | string | `"auto"` | Force: `firecrawl`, `linkup`, `tavily` |
+| `provider` | string | `"auto"` | Force: `firecrawl`, `linkup`, `tavily`, `exa`, `you` |
 | `format` | string | `"markdown"` | `markdown` or `html` |
 | `include_images` | boolean | `false` | Include image metadata when supported |
 | `include_raw_html` | boolean | `false` | Include raw HTML when supported |
 | `render_js` | boolean | `false` | Render JavaScript before extraction when supported |
 
-Auto extraction currently tries Firecrawl, then Linkup, then Tavily when keys are available.
+Auto extraction currently tries Firecrawl, then Linkup, Tavily, Exa, and You.com when keys are available.
 
 Examples:
 

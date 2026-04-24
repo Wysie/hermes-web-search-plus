@@ -89,6 +89,68 @@ class ExtractPlusCoreTests(unittest.TestCase):
         self.assertEqual(headers["Authorization"], "Bearer tvly-test")
         self.assertEqual(body["urls"], ["https://example.com"])
 
+    def test_extract_exa_parses_contents_text(self):
+        fake_response = {
+            "results": [
+                {
+                    "title": "Exa Page",
+                    "url": "https://example.com",
+                    "text": "Exa extracted markdown",
+                    "summary": "Short summary",
+                    "highlights": ["Important excerpt"],
+                }
+            ],
+            "costDollars": {"total": 0.003},
+        }
+        with mock.patch("search.make_request", return_value=fake_response) as mock_request:
+            result = search.extract_exa(
+                urls=["https://example.com"],
+                api_key="exa-test",
+                output_format="markdown",
+            )
+
+        self.assertEqual(result["provider"], "exa")
+        self.assertEqual(result["results"][0]["title"], "Exa Page")
+        self.assertEqual(result["results"][0]["content"], "Exa extracted markdown")
+        self.assertEqual(result["results"][0]["summary"], "Short summary")
+        self.assertEqual(result["cost_dollars"], {"total": 0.003})
+
+        url, headers, body = mock_request.call_args.args[:3]
+        self.assertEqual(url, "https://api.exa.ai/contents")
+        self.assertEqual(headers["x-api-key"], "exa-test")
+        self.assertEqual(body["urls"], ["https://example.com"])
+        self.assertTrue(body["text"])
+
+    def test_extract_you_parses_contents_markdown(self):
+        fake_response = [
+            {
+                "url": "https://example.com",
+                "title": "You Page",
+                "markdown": "You.com extracted markdown",
+                "html": "<h1>You Page</h1>",
+                "metadata": {"siteName": "Example"},
+            }
+        ]
+        with mock.patch("search.make_request", return_value=fake_response) as mock_request:
+            result = search.extract_you(
+                urls=["https://example.com"],
+                api_key="you-test",
+                output_format="markdown",
+                include_raw_html=True,
+            )
+
+        self.assertEqual(result["provider"], "you")
+        self.assertEqual(result["results"][0]["title"], "You Page")
+        self.assertEqual(result["results"][0]["content"], "You.com extracted markdown")
+        self.assertEqual(result["results"][0]["raw_html"], "<h1>You Page</h1>")
+        self.assertEqual(result["results"][0]["metadata"], {"siteName": "Example"})
+
+        url, headers, body = mock_request.call_args.args[:3]
+        self.assertEqual(url, "https://ydc-index.io/v1/contents")
+        self.assertEqual(headers["X-API-Key"], "you-test")
+        self.assertEqual(body["urls"], ["https://example.com"])
+        self.assertEqual(body["formats"], ["markdown", "html", "metadata"])
+
     def test_extract_plus_auto_prefers_firecrawl_when_available(self):
         with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test", "LINKUP_API_KEY": "linkup-test"}, clear=False):
             with mock.patch("search.extract_firecrawl", return_value={"provider": "firecrawl", "results": []}) as mock_firecrawl:
@@ -96,6 +158,14 @@ class ExtractPlusCoreTests(unittest.TestCase):
 
         self.assertEqual(result["provider"], "firecrawl")
         mock_firecrawl.assert_called_once()
+
+    def test_extract_plus_auto_uses_exa_when_only_exa_is_available(self):
+        with mock.patch.dict(os.environ, {"EXA_API_KEY": "exa-test"}, clear=True):
+            with mock.patch("search.extract_exa", return_value={"provider": "exa", "results": []}) as mock_exa:
+                result = search.extract_plus(["https://example.com"], provider="auto")
+
+        self.assertEqual(result["provider"], "exa")
+        mock_exa.assert_called_once()
 
 
 class ExtractPlusPluginTests(unittest.TestCase):
@@ -136,6 +206,8 @@ class ExtractPlusPluginTests(unittest.TestCase):
         self.assertEqual(schema["parameters"]["required"], ["urls"])
         self.assertIn("firecrawl", schema["parameters"]["properties"]["provider"]["enum"])
         self.assertIn("linkup", schema["parameters"]["properties"]["provider"]["enum"])
+        self.assertIn("exa", schema["parameters"]["properties"]["provider"]["enum"])
+        self.assertIn("you", schema["parameters"]["properties"]["provider"]["enum"])
 
 
 if __name__ == "__main__":
