@@ -246,9 +246,14 @@ def cache_stats() -> Dict[str, Any]:
 # Auto-load .env from skill directory (if exists)
 # =============================================================================
 def _load_env_file():
-    """Load .env file from skill root directory if it exists."""
-    env_path = Path(__file__).parent.parent / ".env"
-    if env_path.exists():
+    """Load .env files from plugin-local and legacy parent locations."""
+    env_paths = [
+        Path(__file__).parent / ".env",
+        Path(__file__).parent.parent / ".env",
+    ]
+    for env_path in env_paths:
+        if not env_path.exists():
+            continue
         with open(env_path) as f:
             for line in f:
                 line = line.strip()
