@@ -109,10 +109,25 @@ SEARXNG_INSTANCE_URL=https://your-instance.example.com
 | `depth` | string | `"normal"` | Exa only: `normal`, `deep`, `deep-reasoning` |
 | `count` | integer | `5` | Results (1–20) |
 | `time_range` | string | — | `day`, `week`, `month`, `year` |
-| `include_domains` | array | — | Whitelist: `["arxiv.org"]` |
-| `exclude_domains` | array | — | Blacklist: `["reddit.com"]` |
+| `include_domains` | string[] | — | Restrict search to domains |
+| `exclude_domains` | string[] | — | Exclude domains |
 
-### Examples
+### `web_extract_plus`
+
+Extract content from specific URLs using provider-specific extraction backends.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `urls` | string[] | **required** | URLs to extract |
+| `provider` | string | `"auto"` | Force: `firecrawl`, `linkup`, `tavily` |
+| `format` | string | `"markdown"` | `markdown` or `html` |
+| `include_images` | boolean | `false` | Include image metadata when supported |
+| `include_raw_html` | boolean | `false` | Include raw HTML when supported |
+| `render_js` | boolean | `false` | Render JavaScript before extraction when supported |
+
+Auto extraction currently tries Firecrawl, then Linkup, then Tavily when keys are available.
+
+Examples:
 
 ```python
 web_search_plus(query="Graz weather today")
@@ -135,6 +150,12 @@ web_search_plus(query="YC startups web scraping", provider="firecrawl")
 
 web_search_plus(query="find credible sources and citations for AI tutoring outcomes", provider="linkup")
 # → Linkup source-grounded retrieval
+
+web_extract_plus(urls=["https://example.com"], provider="firecrawl")
+# → Extract clean markdown from a URL
+
+web_extract_plus(urls=["https://docs.linkup.so"], provider="linkup", render_js=False)
+# → Linkup fetch endpoint
 
 web_search_plus(query="LoRA fine-tuning", include_domains=["arxiv.org"])
 # → arxiv only
