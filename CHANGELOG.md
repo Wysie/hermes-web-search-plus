@@ -1,5 +1,28 @@
 # Changelog
 
+## [v1.6.0] — 2026-04-25
+
+### ✨ Added
+- **web_extract_plus** — companion tool to web_search_plus for URL content extraction via Firecrawl, Linkup, Tavily, Exa, and You.com. Unified result shape, per-URL error handling, automatic provider fallback. Use cases: clean markdown from a page, structured content for downstream LLM processing, multi-provider redundancy.
+- New CLI flags: --extract-urls, --format html|markdown, --extract-images, --include-raw-html, --render-js
+- Image extraction support — Firecrawl, Linkup, and Tavily can return image metadata via include_images=True
+
+### 🔧 Improved
+- Auto-fallback now triggers when primary provider returns all-URL errors (previously stopped at first non-empty results array)
+- Response includes requested_provider field for transparency when fallback kicks in
+- web_extract_plus only registers when an extraction-capable provider is configured (Firecrawl/Linkup/Tavily/Exa/You) — no more dead tool with search-only keys
+
+### 🐛 Fixed
+- Firecrawl include_images was a silent no-op; now parses markdown image syntax + ogImage metadata
+- Invalid URLs (no http/https scheme) returned through the entire fallback chain unnecessarily; now return clean validation error
+- Empty --extract-urls crashed argparse; now returns clean JSON error
+
+### 🧪 Tests
+- 9 → 15 unit tests; full coverage of new behavior (fallback cascade, check_fn scoping, image parsing, error paths)
+
+### 🙏 Contributors
+Thanks @Wysieie for the implementation.
+
 ## [1.5.0] - 2026-04-24
 
 ### Added
