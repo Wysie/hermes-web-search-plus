@@ -2214,9 +2214,6 @@ def extract_firecrawl(
     formats = ["markdown"] if output_format != "html" else ["html"]
     if include_raw_html and "html" not in formats:
         formats.append("html")
-    if include_images and "screenshot" not in formats:
-        # Firecrawl supports richer formats; keep images metadata if returned.
-        pass
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     results: List[Dict[str, Any]] = []
@@ -2235,6 +2232,18 @@ def extract_firecrawl(
         markdown = payload.get("markdown") or ""
         html = payload.get("html") or payload.get("rawHtml") or ""
         content = html if output_format == "html" else markdown or html
+        images = None
+        if include_images:
+            md_images = []
+            seen_image_urls = set()
+            for alt, image_url in re.findall(r"!\[([^\]]*)\]\(([^)]+)\)", markdown):
+                if image_url not in seen_image_urls:
+                    md_images.append({"alt": alt, "url": image_url})
+                    seen_image_urls.add(image_url)
+            og_image = metadata.get("ogImage") or metadata.get("og:image")
+            if og_image and og_image not in seen_image_urls:
+                md_images.insert(0, {"alt": "og:image", "url": og_image})
+            images = md_images or None
         results.append(_normalize_extract_result(
             "firecrawl",
             final_url,
@@ -2242,6 +2251,7 @@ def extract_firecrawl(
             content=content,
             raw_content=content,
             raw_html=html if html else None,
+            images=images,
             metadata=metadata,
         ))
     return {"provider": "firecrawl", "results": results}
@@ -2410,6 +2420,16 @@ def extract_plus(
     """Extract URL content with provider fallback."""
     config = config or load_config()
     selected = provider or "auto"
+    if not urls:
+        return {"provider": selected, "results": [], "error": "No URLs provided", "requested_provider": selected}
+    invalid = [u for u in urls if not (isinstance(u, str) and u.startswith(("http://", "https://")))]
+    if invalid:
+        return {
+            "provider": selected,
+            "results": [],
+            "error": f"Invalid URL(s) — must start with http:// or https://: {invalid}",
+            "requested_provider": selected,
+        }
     providers = EXTRACT_PROVIDER_PRIORITY if selected == "auto" else [selected] + [p for p in EXTRACT_PROVIDER_PRIORITY if p != selected]
     errors = []
     for prov in providers:
@@ -2436,7 +2456,16 @@ def extract_plus(
             else:
                 you = config.get("you", {})
                 result = extract_you(urls, key, output_format, include_images, include_raw_html, render_js, api_url=you.get("contents_url", "https://ydc-index.io/v1/contents"), timeout=int(you.get("timeout", 30)))
-            result["routing"] = {"provider": prov, "fallback_used": bool(errors), "fallback_errors": errors}
+            res_list = result.get("results") or []
+            all_failed = bool(res_list) and all(r.get("error") for r in res_list)
+            if all_failed:
+                errors.append({
+                    "provider": prov,
+                    "error": "all_urls_failed",
+                    "details": [r.get("error") for r in res_list],
+                })
+                continue
+            result["routing"] = {"provider": prov, "requested_provider": selected, "fallback_used": bool(errors), "fallback_errors": errors}
             return result
         except Exception as e:
             errors.append({"provider": prov, "error": str(e)})
@@ -3077,7 +3106,7 @@ Full docs: See README.md and SKILL.md
     )
     parser.add_argument(
         "--extract-urls",
-        nargs="+",
+        nargs="*",
         help="Extract content from one or more URLs instead of running a search"
     )
     parser.add_argument(
@@ -3312,7 +3341,7 @@ Full docs: See README.md and SKILL.md
         print(json.dumps(result, indent=indent, ensure_ascii=False))
         return
 
-    if args.extract_urls:
+    if args.extract_urls is not None:
         result = extract_plus(
             urls=args.extract_urls,
             provider=args.provider or "auto",

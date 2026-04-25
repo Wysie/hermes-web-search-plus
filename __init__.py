@@ -26,6 +26,13 @@ _PROVIDER_ENV_KEYS = [
     "YOU_API_KEY",
     "SEARXNG_INSTANCE_URL",
 ]
+_EXTRACT_PROVIDER_ENV_KEYS = [
+    "FIRECRAWL_API_KEY",
+    "LINKUP_API_KEY",
+    "TAVILY_API_KEY",
+    "EXA_API_KEY",
+    "YOU_API_KEY",
+]
 
 
 def _load_plugin_env() -> None:
@@ -287,8 +294,12 @@ def register(ctx: Any) -> None:
         return _format_results(data)
 
     def check_fn() -> bool:
-        """Plugin is available if at least one provider credential is configured."""
+        """Search is available if at least one search provider credential is configured."""
         return any(os.environ.get(k) for k in _PROVIDER_ENV_KEYS)
+
+    def extract_check_fn() -> bool:
+        """Extraction is available if at least one extraction-capable provider credential is configured."""
+        return any(os.environ.get(k) for k in _EXTRACT_PROVIDER_ENV_KEYS)
 
     ctx.register_tool(
         name="web_search_plus",
@@ -350,7 +361,7 @@ def register(ctx: Any) -> None:
         toolset=_TOOLSET_NAME,
         schema=extract_schema,
         handler=extract_handler,
-        check_fn=check_fn,
+        check_fn=extract_check_fn,
         requires_env=[],
         description="Multi-provider URL extraction",
         emoji="📄",

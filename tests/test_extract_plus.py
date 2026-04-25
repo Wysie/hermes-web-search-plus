@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 import unittest
 from unittest import mock
 
@@ -167,6 +169,70 @@ class ExtractPlusCoreTests(unittest.TestCase):
         self.assertEqual(result["provider"], "exa")
         mock_exa.assert_called_once()
 
+    def test_extract_firecrawl_include_images_parses_markdown_and_og_image(self):
+        fake_response = {
+            "success": True,
+            "data": {
+                "markdown": "# Example\n![Hero](https://example.com/hero.png)\n![Hero again](https://example.com/hero.png)",
+                "metadata": {"title": "Example Page", "sourceURL": "https://example.com", "ogImage": "https://example.com/og.png"},
+            },
+        }
+        with mock.patch("search.make_request", return_value=fake_response):
+            result = search.extract_firecrawl(
+                urls=["https://example.com"],
+                api_key="fc-test",
+                include_images=True,
+            )
+
+        images = result["results"][0]["images"]
+        self.assertEqual(images[0], {"alt": "og:image", "url": "https://example.com/og.png"})
+        self.assertIn({"alt": "Hero", "url": "https://example.com/hero.png"}, images)
+
+    def test_extract_plus_falls_back_when_primary_returns_only_errors(self):
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test", "LINKUP_API_KEY": "linkup-test"}, clear=True):
+            with mock.patch("search.extract_firecrawl", return_value={"provider": "firecrawl", "results": [{"url": "https://example.com", "error": "fetch failed"}]}) as mock_firecrawl:
+                with mock.patch("search.extract_linkup", return_value={"provider": "linkup", "results": [{"url": "https://example.com", "content": "fallback content"}]}) as mock_linkup:
+                    result = search.extract_plus(["https://example.com"], provider="firecrawl")
+
+        self.assertEqual(result["provider"], "linkup")
+        self.assertTrue(result["routing"]["fallback_used"])
+        self.assertEqual(result["routing"]["fallback_errors"][0]["error"], "all_urls_failed")
+        mock_firecrawl.assert_called_once()
+        mock_linkup.assert_called_once()
+
+    def test_extract_plus_empty_urls_returns_clean_error_without_provider_calls(self):
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}, clear=True):
+            with mock.patch("search.extract_firecrawl") as mock_firecrawl:
+                result = search.extract_plus([], provider="firecrawl")
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["error"], "No URLs provided")
+        mock_firecrawl.assert_not_called()
+
+    def test_extract_plus_invalid_urls_return_clean_error_without_fallback(self):
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test", "LINKUP_API_KEY": "linkup-test"}, clear=True):
+            with mock.patch("search.extract_firecrawl") as mock_firecrawl, mock.patch("search.extract_linkup") as mock_linkup:
+                result = search.extract_plus(["foo-bar"], provider="firecrawl")
+
+        self.assertEqual(result["results"], [])
+        self.assertIn("Invalid URL(s)", result["error"])
+        mock_firecrawl.assert_not_called()
+        mock_linkup.assert_not_called()
+
+    def test_cli_empty_extract_urls_returns_json_error(self):
+        completed = subprocess.run(
+            [sys.executable, "search.py", "--extract-urls", "--provider", "firecrawl", "--compact"],
+            cwd=os.path.dirname(search.__file__),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["error"], "No URLs provided")
+
 
 class ExtractPlusPluginTests(unittest.TestCase):
     def test_run_extract_invokes_search_script_extract_mode(self):
@@ -208,6 +274,23 @@ class ExtractPlusPluginTests(unittest.TestCase):
         self.assertIn("linkup", schema["parameters"]["properties"]["provider"]["enum"])
         self.assertIn("exa", schema["parameters"]["properties"]["provider"]["enum"])
         self.assertIn("you", schema["parameters"]["properties"]["provider"]["enum"])
+
+    def test_web_extract_plus_check_fn_requires_extract_capable_provider(self):
+        registered = {}
+
+        class Ctx:
+            def register_tool(self, **kwargs):
+                registered[kwargs["name"]] = kwargs
+
+        with mock.patch.dict(os.environ, {"SERPER_API_KEY": "serper-test"}, clear=True):
+            plugin.register(Ctx())
+            self.assertTrue(registered["web_search_plus"]["check_fn"]())
+            self.assertFalse(registered["web_extract_plus"]["check_fn"]())
+
+        registered.clear()
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}, clear=True):
+            plugin.register(Ctx())
+            self.assertTrue(registered["web_extract_plus"]["check_fn"]())
 
 
 if __name__ == "__main__":
