@@ -233,6 +233,50 @@ class ExtractPlusCoreTests(unittest.TestCase):
         self.assertEqual(result["results"], [])
         self.assertEqual(result["error"], "No URLs provided")
 
+    def test_extract_plus_retries_transient_provider_errors(self):
+        transient = search.ProviderRequestError("temporary outage", status_code=503, transient=True)
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}, clear=True):
+            with mock.patch(
+                "search.extract_firecrawl",
+                side_effect=[transient, {"provider": "firecrawl", "results": [{"url": "https://example.com", "content": "ok"}]}],
+            ) as mock_firecrawl:
+                with mock.patch("search.time.sleep") as mock_sleep:
+                    result = search.extract_plus(["https://example.com"], provider="firecrawl")
+
+        self.assertEqual(result["provider"], "firecrawl")
+        self.assertEqual(mock_firecrawl.call_count, 2)
+        mock_sleep.assert_called_once_with(search.RETRY_BACKOFF_SECONDS[0])
+
+    def test_extract_plus_marks_failed_provider_and_resets_successful_fallback(self):
+        transient = search.ProviderRequestError("temporary outage", status_code=503, transient=True)
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test", "LINKUP_API_KEY": "linkup-test"}, clear=True):
+            with mock.patch("search.extract_firecrawl", side_effect=[transient, transient, transient]):
+                with mock.patch("search.extract_linkup", return_value={"provider": "linkup", "results": [{"url": "https://example.com", "content": "fallback"}]}):
+                    with mock.patch("search.time.sleep"):
+                        with mock.patch("search.mark_provider_failure", return_value={"cooldown_seconds": 60}) as mock_mark:
+                            with mock.patch("search.reset_provider_health") as mock_reset:
+                                result = search.extract_plus(["https://example.com"], provider="firecrawl")
+
+        self.assertEqual(result["provider"], "linkup")
+        mock_mark.assert_called_once()
+        self.assertEqual(mock_mark.call_args.args[0], "firecrawl")
+        mock_reset.assert_called_once_with("linkup")
+        self.assertEqual(result["routing"]["fallback_errors"][0]["cooldown_seconds"], 60)
+
+    def test_extract_plus_skips_provider_in_cooldown(self):
+        def fake_cooldown(provider):
+            return (provider == "firecrawl", 42 if provider == "firecrawl" else 0)
+
+        with mock.patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test", "LINKUP_API_KEY": "linkup-test"}, clear=True):
+            with mock.patch("search.provider_in_cooldown", side_effect=fake_cooldown):
+                with mock.patch("search.extract_firecrawl") as mock_firecrawl:
+                    with mock.patch("search.extract_linkup", return_value={"provider": "linkup", "results": [{"url": "https://example.com", "content": "fallback"}]}):
+                        result = search.extract_plus(["https://example.com"], provider="firecrawl")
+
+        self.assertEqual(result["provider"], "linkup")
+        mock_firecrawl.assert_not_called()
+        self.assertEqual(result["routing"]["cooldown_skips"], [{"provider": "firecrawl", "cooldown_remaining_seconds": 42}])
+
 
 class ExtractPlusPluginTests(unittest.TestCase):
     def test_run_extract_invokes_search_script_extract_mode(self):
