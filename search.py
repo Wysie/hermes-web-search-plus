@@ -1583,6 +1583,28 @@ def _choose_tie_winner(query: str, winners: List[str], priority: List[str]) -> s
 # HTTP Client
 # =============================================================================
 
+def execute_provider_with_retry(provider: str, operation, max_attempts: int = 3) -> Dict[str, Any]:
+    """Execute a provider operation with shared transient-error retry semantics."""
+    last_error = None
+    for attempt in range(0, max_attempts):
+        try:
+            return operation()
+        except ProviderRequestError as e:
+            last_error = e
+            if e.status_code in {401, 403}:
+                break
+            if not e.transient:
+                break
+            if attempt < max_attempts - 1:
+                time.sleep(RETRY_BACKOFF_SECONDS[min(attempt, len(RETRY_BACKOFF_SECONDS) - 1)])
+                continue
+            break
+        except Exception as e:
+            last_error = e
+            break
+    raise last_error if last_error else Exception(f"Unknown {provider} provider execution error")
+
+
 def make_request(url: str, headers: dict, body: dict, timeout: int = 30) -> dict:
     """Make HTTP POST request and return JSON response."""
     # Ensure User-Agent is set (required by some APIs like Exa/Cloudflare)
@@ -2432,6 +2454,7 @@ def extract_plus(
         }
     providers = EXTRACT_PROVIDER_PRIORITY if selected == "auto" else [selected] + [p for p in EXTRACT_PROVIDER_PRIORITY if p != selected]
     errors = []
+    cooldown_skips = []
     for prov in providers:
         if prov not in EXTRACT_PROVIDER_PRIORITY:
             errors.append({"provider": prov, "error": f"Provider {prov} does not support extraction"})
@@ -2440,22 +2463,28 @@ def extract_plus(
         if not key:
             errors.append({"provider": prov, "error": "missing_api_key"})
             continue
+        in_cooldown, remaining = provider_in_cooldown(prov)
+        if in_cooldown:
+            cooldown_skips.append({"provider": prov, "cooldown_remaining_seconds": remaining})
+            continue
         try:
-            if prov == "firecrawl":
-                fc = config.get("firecrawl", {})
-                result = extract_firecrawl(urls, key, output_format, include_images, include_raw_html, render_js, api_url=fc.get("scrape_url", "https://api.firecrawl.dev/v2/scrape"), timeout=int(fc.get("extract_timeout", 60)))
-            elif prov == "linkup":
-                lu = config.get("linkup", {})
-                result = extract_linkup(urls, key, output_format, include_images, include_raw_html, render_js, api_url=lu.get("fetch_url", "https://api.linkup.so/v1/fetch"), timeout=int(lu.get("timeout", 30)))
-            elif prov == "tavily":
-                tv = config.get("tavily", {})
-                result = extract_tavily(urls, key, output_format, include_images, include_raw_html, render_js, api_url=tv.get("extract_url", "https://api.tavily.com/extract"), timeout=int(tv.get("timeout", 30)))
-            elif prov == "exa":
-                exa = config.get("exa", {})
-                result = extract_exa(urls, key, output_format, include_images, include_raw_html, render_js, api_url=exa.get("contents_url", "https://api.exa.ai/contents"), timeout=int(exa.get("timeout", 30)))
-            else:
+            def execute_extract() -> Dict[str, Any]:
+                if prov == "firecrawl":
+                    fc = config.get("firecrawl", {})
+                    return extract_firecrawl(urls, key, output_format, include_images, include_raw_html, render_js, api_url=fc.get("scrape_url", "https://api.firecrawl.dev/v2/scrape"), timeout=int(fc.get("extract_timeout", 60)))
+                if prov == "linkup":
+                    lu = config.get("linkup", {})
+                    return extract_linkup(urls, key, output_format, include_images, include_raw_html, render_js, api_url=lu.get("fetch_url", "https://api.linkup.so/v1/fetch"), timeout=int(lu.get("timeout", 30)))
+                if prov == "tavily":
+                    tv = config.get("tavily", {})
+                    return extract_tavily(urls, key, output_format, include_images, include_raw_html, render_js, api_url=tv.get("extract_url", "https://api.tavily.com/extract"), timeout=int(tv.get("timeout", 30)))
+                if prov == "exa":
+                    exa = config.get("exa", {})
+                    return extract_exa(urls, key, output_format, include_images, include_raw_html, render_js, api_url=exa.get("contents_url", "https://api.exa.ai/contents"), timeout=int(exa.get("timeout", 30)))
                 you = config.get("you", {})
-                result = extract_you(urls, key, output_format, include_images, include_raw_html, render_js, api_url=you.get("contents_url", "https://ydc-index.io/v1/contents"), timeout=int(you.get("timeout", 30)))
+                return extract_you(urls, key, output_format, include_images, include_raw_html, render_js, api_url=you.get("contents_url", "https://ydc-index.io/v1/contents"), timeout=int(you.get("timeout", 30)))
+
+            result = execute_provider_with_retry(prov, execute_extract)
             res_list = result.get("results") or []
             all_failed = bool(res_list) and all(r.get("error") for r in res_list)
             if all_failed:
@@ -2465,12 +2494,20 @@ def extract_plus(
                     "details": [r.get("error") for r in res_list],
                 })
                 continue
-            result["routing"] = {"provider": prov, "requested_provider": selected, "fallback_used": bool(errors), "fallback_errors": errors}
+            reset_provider_health(prov)
+            result["routing"] = {"provider": prov, "requested_provider": selected, "fallback_used": bool(errors) or bool(cooldown_skips), "fallback_errors": errors}
+            if cooldown_skips:
+                result["routing"]["cooldown_skips"] = cooldown_skips
             return result
         except Exception as e:
-            errors.append({"provider": prov, "error": str(e)})
+            error_msg = str(e)
+            cooldown_info = mark_provider_failure(prov, error_msg)
+            errors.append({"provider": prov, "error": error_msg, "cooldown_seconds": cooldown_info.get("cooldown_seconds")})
             continue
-    return {"provider": selected, "results": [], "error": "All extraction providers failed", "fallback_errors": errors}
+    error_result = {"provider": selected, "results": [], "error": "All extraction providers failed", "fallback_errors": errors}
+    if cooldown_skips:
+        error_result["cooldown_skips"] = cooldown_skips
+    return error_result
 
 
 # =============================================================================
@@ -3560,24 +3597,7 @@ Full docs: See README.md and SKILL.md
             raise ValueError(f"Unknown provider: {prov}")
 
     def execute_with_retry(prov: str) -> Dict[str, Any]:
-        last_error = None
-        for attempt in range(0, 3):
-            try:
-                return execute_search(prov)
-            except ProviderRequestError as e:
-                last_error = e
-                if e.status_code in {401, 403}:
-                    break
-                if not e.transient:
-                    break
-                if attempt < 2:
-                    time.sleep(RETRY_BACKOFF_SECONDS[attempt])
-                    continue
-                break
-            except Exception as e:
-                last_error = e
-                break
-        raise last_error if last_error else Exception("Unknown provider execution error")
+        return execute_provider_with_retry(prov, lambda: execute_search(prov))
 
     cache_context = {
         "locale": f"{args.country}:{args.language}",
