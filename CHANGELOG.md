@@ -15,6 +15,9 @@
 - Added extraction tests for transient retry behavior, cooldown skipping, and provider health reset after fallback success.
 - Test suite remains green: 35/35 unit tests passing.
 
+### 🙏 Contributors
+- Thanks **@Wysie** for the implementation behind this release (`refactor extract plus resilience reuse`, PR #7).
+
 ## [v1.6.0] — 2026-04-25
 
 ### ✨ Added
